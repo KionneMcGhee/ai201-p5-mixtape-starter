@@ -41,8 +41,7 @@ def add_to_playlist(playlist_id: str, song_id: str, added_by_user_id: str) -> No
         song_id: The ID of the song being added.
         added_by_user_id: The ID of the user who added the song.
     """
-    from models import Playlist
-    from services.playlist_service import get_playlist_songs
+    from models import Playlist, playlist_entries
 
     song = db.session.get(Song, song_id)
     if not song:
@@ -56,18 +55,30 @@ def add_to_playlist(playlist_id: str, song_id: str, added_by_user_id: str) -> No
     if not playlist:
         raise ValueError(f"Playlist {playlist_id} not found")
 
-    # Add the song to the playlist
-    if song not in playlist.songs:
-        playlist.songs.append(song)
-        db.session.commit()
+    if song in playlist.songs:
+        return
 
-    # Notify the person who originally shared the song (if it wasn't them who added it)
+    last_position = db.session.scalar(
+        db.select(db.func.max(playlist_entries.c.position))
+        .where(playlist_entries.c.playlist_id == playlist_id)
+    )
+    db.session.execute(
+        playlist_entries.insert().values(
+            playlist_id=playlist_id,
+            song_id=song_id,
+            position=(last_position or 0) + 1,
+            added_by=added_by_user_id,
+        )
+    )
+
     if song.shared_by != added_by_user_id:
         create_notification(
             user_id=song.shared_by,
             notification_type="song_added_to_playlist",
             body=f"{adder.username} added your song '{song.title}' to the playlist '{playlist.name}'.",
         )
+    else:
+        db.session.commit()
 
 
 def rate_song(user_id: str, song_id: str, score: int) -> Rating:
